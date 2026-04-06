@@ -1,0 +1,12 @@
+.cache/
+.plan/
+
+# Local build/test artifacts
+/photoroller
+/photo-roller
+*.test
+*.out
+
+# Editor/OS noise
+.DS_Store
+Thumbs.db
