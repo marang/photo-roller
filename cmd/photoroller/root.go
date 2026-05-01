@@ -14,6 +14,10 @@ var rootCmd = &cobra.Command{
 	Use:   "photoroller",
 	Short: "Import photos/videos from DCIM into day-based album folders",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		sourceFlag := cmd.Root().PersistentFlags().Lookup("source")
+		if sourceFlag != nil && !sourceFlag.Changed {
+			cfg.Source = config.DetectSourceDefault()
+		}
 		if cfg.Lang != "de" && cfg.Lang != "en" {
 			return fmt.Errorf("unsupported --lang %q (use de|en)", cfg.Lang)
 		}
@@ -37,7 +41,7 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&cfg.Source, "source", config.DefaultSource, "source directory")
+	rootCmd.PersistentFlags().StringVar(&cfg.Source, "source", config.DefaultSource, "source directory (auto-detected when omitted)")
 	rootCmd.PersistentFlags().StringVar(&cfg.Target, "target", config.DefaultTarget, "target directory")
 	rootCmd.PersistentFlags().StringVar(&cfg.Lang, "lang", config.DefaultLang, "location language (de|en)")
 	rootCmd.PersistentFlags().BoolVar(&cfg.Confirm, "confirm", false, "ask for confirmation before executing apply")

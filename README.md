@@ -37,7 +37,7 @@ Example target layout:
 
 Defaults:
 
-- Source: `/media/camera/DCIM/`
+- Source: auto-detects the first mounted camera/SD-card `DCIM` directory, or use `--source`
 - Target: `/mnt/data/assets/__albums/`
 
 PhotoRoller uses `rclone`, so make sure it is installed and available in `PATH`.
