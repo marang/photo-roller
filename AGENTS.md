@@ -47,14 +47,12 @@ If full verification was not done, state that explicitly and do not claim comple
 
 ## 4) Step-Specific Contract
 
-### Step 1 (Source & Target)
+### Step 1 (Source Directory)
 1. Single full-width pane.
-2. Source browser and target selection in the same pane.
-3. Include a checkbox labeled "Use defaults" which pre-fills source and target directories to default paths.
-4. If "Use defaults" is checked, the step proceeds automatically without confirmation.
-5. Otherwise, show `> Confirm [Ctrl+S]` as per Confirm Pattern
+2. Source browser, selected source path, source stats, and source event analysis are in the same pane.
+3. Show `> Confirm [Ctrl+S]` as per Confirm Pattern.
 
-### Step 2 (Target)
+### Step 2 (Target Directory)
 
 1. Two panes:
    - left: selected source summary

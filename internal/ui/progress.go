@@ -32,6 +32,7 @@ type Model struct {
 	width       int
 	height      int
 	finished    bool
+	canceled    bool
 	runErr      error
 	focus       FocusRing
 	leftScroll  int
@@ -137,6 +138,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+d":
+			m.canceled = true
 			m.finished = true
 			return m, tea.Quit
 		case "tab":
@@ -199,6 +201,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) Canceled() bool {
+	return m.canceled
+}
+
 func (m Model) View() string {
 	if m.left != "" {
 		return m.twoPaneView()
@@ -229,7 +235,7 @@ func (m Model) View() string {
 	lines := []string{
 		title,
 		status,
-		m.bar.View(),
+		m.bar.ViewAs(m.percentDone()),
 		fmt.Sprintf("Progress: %d/%d", m.done, m.total),
 		current,
 		segment,
@@ -315,7 +321,7 @@ func (m Model) twoPaneView() string {
 	rightHeaderStyle := styleLabel()
 	rightContent := []string{
 		clampLine(status, rightTextWidth),
-		m.bar.View(),
+		m.bar.ViewAs(m.percentDone()),
 		clampLine(fmt.Sprintf("Progress: %d/%d", m.done, m.total), rightTextWidth),
 		clampLine(current, rightTextWidth),
 		clampLine(segment, rightTextWidth),
@@ -339,6 +345,13 @@ func (m Model) twoPaneView() string {
 	hint := styleMuted().Render(clampLine(hintText, width-2))
 	body := joinPanes(leftPane, rightPane, defaultPaneGap)
 	return renderScreenFrame(width, frameIntro(m.stepTitle, m.subtitle), body, hint)
+}
+
+func (m Model) percentDone() float64 {
+	if m.total <= 0 {
+		return 0
+	}
+	return float64(m.done) / float64(m.total)
 }
 
 func (m *Model) clampScrolls() {

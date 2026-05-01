@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type PlannedCopy struct {
@@ -90,28 +91,27 @@ func VerifyPlannedCopies(result ScanResult, target, collisionMode string) (Verif
 	return summary, nil
 }
 
-func DeleteVerifiedSources(result ScanResult, sourceRoot, targetRoot, collisionMode string) (DeleteSummary, error) {
+func DeleteVerifiedSources(copied []PlannedCopy, sourceRoot string) (DeleteSummary, error) {
 	summary := DeleteSummary{}
-	err := IteratePlannedCopies(targetRoot, collisionMode, result, func(item PlannedCopy) error {
+	for _, item := range copied {
+		if !isPathUnderRoot(item.Source, sourceRoot) {
+			continue
+		}
 		srcInfo, srcErr := os.Stat(item.Source)
 		if srcErr != nil {
-			return nil
+			continue
 		}
 		dstInfo, dstErr := os.Stat(item.Target)
 		if dstErr != nil {
-			return nil
+			continue
 		}
 		if srcInfo.Size() != dstInfo.Size() {
-			return nil
+			continue
 		}
 		if err := os.Remove(item.Source); err != nil {
-			return nil
+			continue
 		}
 		summary.DeletedFiles++
-		return nil
-	})
-	if err != nil {
-		return summary, err
 	}
 
 	dirs, dirErr := removeEmptyDirsUnder(sourceRoot)
@@ -120,6 +120,19 @@ func DeleteVerifiedSources(result ScanResult, sourceRoot, targetRoot, collisionM
 	}
 	summary.DeletedDirs = dirs
 	return summary, nil
+}
+
+func isPathUnderRoot(path, root string) bool {
+	absPath, pathErr := filepath.Abs(path)
+	absRoot, rootErr := filepath.Abs(root)
+	if pathErr != nil || rootErr != nil {
+		return false
+	}
+	rel, relErr := filepath.Rel(absRoot, absPath)
+	if relErr != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 func removeEmptyDirsUnder(root string) (int, error) {

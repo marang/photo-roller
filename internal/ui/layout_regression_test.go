@@ -3,6 +3,8 @@ package ui
 import (
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestPathPickerViewStartsWithSubtitle(t *testing.T) {
@@ -54,5 +56,44 @@ func TestProgressViewStartsWithIntroText(t *testing.T) {
 	first := strings.Split(view, "\n")[0]
 	if !strings.Contains(first, "Copying planned files to target") {
 		t.Fatalf("expected intro text in first line, got: %q", first)
+	}
+}
+
+func TestWizardPromptConfirmLabelIsSingleLine(t *testing.T) {
+	m := selectPromptModel{
+		title:    "Step 3 - Preflight Review",
+		subtitle: "Validate the planned import before copying",
+		left:     "Step 1 - Source Directory\n/src\nStep 2 - Target Directory\n/dst",
+		summary:  "Source: /src\nTarget: /dst",
+		options: []SelectOption{
+			{Title: "Confirm", Value: "confirm"},
+		},
+		width:  120,
+		height: 30,
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "> Confirm [Ctrl+S]") {
+		t.Fatalf("expected unified confirm label, got:\n%s", view)
+	}
+	if strings.Contains(view, "\nCtrl+S\n") {
+		t.Fatalf("did not expect standalone Ctrl+S line, got:\n%s", view)
+	}
+}
+
+func TestWizardPromptDoesNotQuitOnCommonNonQuitKeys(t *testing.T) {
+	for _, key := range []string{"ctrl+c", "q", "esc"} {
+		m := selectPromptModel{
+			options: []SelectOption{
+				{Title: "Confirm", Value: "confirm"},
+			},
+		}
+		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+		if cmd != nil {
+			t.Fatalf("key %q returned unexpected command", key)
+		}
+		if updated.(selectPromptModel).cancel {
+			t.Fatalf("key %q should not cancel", key)
+		}
 	}
 }

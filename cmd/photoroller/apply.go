@@ -57,16 +57,23 @@ var applyCmd = &cobra.Command{
 			}
 		}
 
+		applyCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
 		events := make(chan app.ProgressEvent, 64)
 		errCh := make(chan error, 1)
 		go func() {
-			errCh <- app.ApplyPlan(ctx, cfg, result, events)
+			_, applyErr := app.ApplyPlanWithSummary(applyCtx, cfg, result, events)
+			errCh <- applyErr
 		}()
 
 		model := ui.NewProgressModel(events, result.TotalFiles, "", "Copying planned files to target")
 		p := tea.NewProgram(model)
-		if _, err := p.Run(); err != nil {
+		finalModel, err := p.Run()
+		if err != nil {
 			return err
+		}
+		if progressModel, ok := finalModel.(ui.Model); ok && progressModel.Canceled() {
+			cancel()
 		}
 
 		if err := <-errCh; err != nil {

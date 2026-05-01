@@ -21,6 +21,12 @@ type ProgressEvent struct {
 	Total   int
 }
 
+type ApplySummary struct {
+	Copied          []PlannedCopy
+	SkippedExisting []PlannedCopy
+	Processed       int
+}
+
 const (
 	EventDayStart     = "day_start"
 	EventSegmentStart = "segment_start"
@@ -32,17 +38,22 @@ const (
 const (
 	dirPerm = 0o755
 
-	rcloneArgCopyTo         = "copyto"
-	rcloneArgIgnoreExisting = "--ignore-existing"
+	rcloneArgCopyTo = "copyto"
 )
 
 func ApplyPlan(ctx context.Context, cfg config.Config, result ScanResult, events chan<- ProgressEvent) error {
+	_, err := ApplyPlanWithSummary(ctx, cfg, result, events)
+	return err
+}
+
+func ApplyPlanWithSummary(ctx context.Context, cfg config.Config, result ScanResult, events chan<- ProgressEvent) (ApplySummary, error) {
 	defer close(events)
 
 	if _, err := exec.LookPath("rclone"); err != nil {
-		return fmt.Errorf("rclone is required but was not found in PATH: %w", err)
+		return ApplySummary{}, fmt.Errorf("rclone is required but was not found in PATH: %w", err)
 	}
 
+	summary := ApplySummary{}
 	var errs []error
 	total := result.TotalFiles
 	done := 0
@@ -50,7 +61,7 @@ func ApplyPlan(ctx context.Context, cfg config.Config, result ScanResult, events
 	for _, day := range result.Days {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return summary, ctx.Err()
 		default:
 		}
 
@@ -60,18 +71,22 @@ func ApplyPlan(ctx context.Context, cfg config.Config, result ScanResult, events
 			continue
 		}
 
-		events <- ProgressEvent{
+		if err := sendProgressEvent(ctx, events, ProgressEvent{
 			Kind: EventDayStart,
 			Day:  day.FolderName,
+		}); err != nil {
+			return summary, err
 		}
 
 		for _, segment := range day.Segments {
-			events <- ProgressEvent{
+			if err := sendProgressEvent(ctx, events, ProgressEvent{
 				Kind:    EventSegmentStart,
 				Day:     day.FolderName,
 				Segment: segment.FolderName,
 				Done:    done,
 				Total:   total,
+			}); err != nil {
+				return summary, err
 			}
 
 			segmentDir := filepath.Join(destDayDir, segment.FolderName)
@@ -84,7 +99,7 @@ func ApplyPlan(ctx context.Context, cfg config.Config, result ScanResult, events
 			for _, src := range segment.Files {
 				select {
 				case <-ctx.Done():
-					return ctx.Err()
+					return summary, ctx.Err()
 				default:
 				}
 
@@ -93,56 +108,138 @@ func ApplyPlan(ctx context.Context, cfg config.Config, result ScanResult, events
 				targetName, nameErr := resolveTargetName(base, nameCounts[base], cfg.CollisionMode)
 				if nameErr != nil {
 					errs = append(errs, fmt.Errorf("collision handling in segment %s: %w", segment.FolderName, nameErr))
-					events <- ProgressEvent{
+					if err := sendProgressEvent(ctx, events, ProgressEvent{
 						Kind:    EventWarning,
 						Day:     day.FolderName,
 						Segment: segment.FolderName,
 						Message: nameErr.Error(),
 						Done:    done,
 						Total:   total,
+					}); err != nil {
+						return summary, err
 					}
 					continue
 				}
 				dst := filepath.Join(segmentDir, targetName)
+				copyItem := PlannedCopy{
+					Source: src,
+					Target: dst,
+				}
+
+				existingInfo, existingErr := os.Stat(dst)
+				if existingErr == nil {
+					srcInfo, statErr := os.Stat(src)
+					if statErr != nil {
+						errs = append(errs, fmt.Errorf("stat source %s: %w", src, statErr))
+						if err := sendProgressEvent(ctx, events, ProgressEvent{
+							Kind:    EventWarning,
+							Day:     day.FolderName,
+							Segment: segment.FolderName,
+							Message: fmt.Sprintf("source stat failed: %s", base),
+							Done:    done,
+							Total:   total,
+						}); err != nil {
+							return summary, err
+						}
+						continue
+					}
+					if existingInfo.Size() != srcInfo.Size() {
+						errs = append(errs, fmt.Errorf("target exists with different size: %s", dst))
+						if err := sendProgressEvent(ctx, events, ProgressEvent{
+							Kind:    EventWarning,
+							Day:     day.FolderName,
+							Segment: segment.FolderName,
+							Message: fmt.Sprintf("target size mismatch: %s", base),
+							Done:    done,
+							Total:   total,
+						}); err != nil {
+							return summary, err
+						}
+						continue
+					}
+					summary.SkippedExisting = append(summary.SkippedExisting, copyItem)
+					done++
+					summary.Processed = done
+					if err := sendProgressEvent(ctx, events, ProgressEvent{
+						Kind:    EventFileDone,
+						Day:     day.FolderName,
+						Segment: segment.FolderName,
+						Done:    done,
+						Total:   total,
+					}); err != nil {
+						return summary, err
+					}
+					continue
+				}
+				if existingErr != nil && !os.IsNotExist(existingErr) {
+					errs = append(errs, fmt.Errorf("stat target %s: %w", dst, existingErr))
+					if err := sendProgressEvent(ctx, events, ProgressEvent{
+						Kind:    EventWarning,
+						Day:     day.FolderName,
+						Segment: segment.FolderName,
+						Message: fmt.Sprintf("target stat failed: %s", base),
+						Done:    done,
+						Total:   total,
+					}); err != nil {
+						return summary, err
+					}
+					continue
+				}
 
 				args := []string{
 					rcloneArgCopyTo,
 					src,
 					dst,
-					rcloneArgIgnoreExisting,
 				}
 				cmd := exec.CommandContext(ctx, "rclone", args...)
 				if out, err := cmd.CombinedOutput(); err != nil {
 					errs = append(errs, fmt.Errorf("copy %s -> %s: %w (%s)", src, dst, err, strings.TrimSpace(string(out))))
-					events <- ProgressEvent{
+					if err := sendProgressEvent(ctx, events, ProgressEvent{
 						Kind:    EventWarning,
 						Day:     day.FolderName,
 						Segment: segment.FolderName,
 						Message: fmt.Sprintf("copy failed: %s", base),
 						Done:    done,
 						Total:   total,
+					}); err != nil {
+						return summary, err
 					}
 					continue
 				}
 
+				summary.Copied = append(summary.Copied, copyItem)
 				done++
-				events <- ProgressEvent{
+				summary.Processed = done
+				if err := sendProgressEvent(ctx, events, ProgressEvent{
 					Kind:    EventFileDone,
 					Day:     day.FolderName,
 					Segment: segment.FolderName,
 					Done:    done,
 					Total:   total,
+				}); err != nil {
+					return summary, err
 				}
 			}
 		}
 	}
 
-	events <- ProgressEvent{
+	if err := sendProgressEvent(ctx, events, ProgressEvent{
 		Kind:  EventDone,
 		Done:  done,
 		Total: total,
+	}); err != nil {
+		return summary, err
 	}
-	return errors.Join(errs...)
+	return summary, errors.Join(errs...)
+}
+
+func sendProgressEvent(ctx context.Context, events chan<- ProgressEvent, event ProgressEvent) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case events <- event:
+		return nil
+	}
 }
 
 func uniqueName(base string, count int) string {

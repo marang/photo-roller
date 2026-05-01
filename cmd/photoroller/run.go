@@ -161,33 +161,53 @@ var runCmd = &cobra.Command{
 				continue
 			}
 			if execChoice == "start" {
+				applyCtx, cancel := context.WithCancel(ctx)
 				events := make(chan app.ProgressEvent, 64)
 				errCh := make(chan error, 1)
+				summaryCh := make(chan app.ApplySummary, 1)
 				go func() {
-					errCh <- app.ApplyPlan(ctx, cfg, result, events)
+					applySummary, applyErr := app.ApplyPlanWithSummary(applyCtx, cfg, result, events)
+					summaryCh <- applySummary
+					errCh <- applyErr
 				}()
 
 				model := ui.NewProgressModel(events, result.TotalFiles, wizard.LeftSummary(), "Copying planned files to target (no source deletion yet)")
 				p := tea.NewProgram(model, tea.WithAltScreen())
-				if _, err := p.Run(); err != nil {
+				finalModel, err := p.Run()
+				if err != nil {
+					cancel()
 					return err
 				}
+				if progressModel, ok := finalModel.(ui.Model); ok && progressModel.Canceled() {
+					cancel()
+				}
+				applySummary := <-summaryCh
 				applyErr := <-errCh
+				cancel()
 
 				verifySummary, verifyErr := app.VerifyPlannedCopies(result, cfg.Target, cfg.CollisionMode)
 				if verifyErr != nil {
 					return verifyErr
 				}
 				verifyText := wizard.VerifySummary(verifySummary, applyErr)
+				verifyText += fmt.Sprintf(
+					"\n\nCopy result:\n- copied this run: %d\n- skipped existing targets: %d\n- cleanup eligible: %d",
+					len(applySummary.Copied),
+					len(applySummary.SkippedExisting),
+					len(applySummary.Copied),
+				)
+				cleanupOptions := []ui.SelectOption{
+					{Title: "Leave all files on SD card", Description: "", Value: "keep"},
+				}
+				if applyErr == nil && len(applySummary.Copied) > 0 {
+					cleanupOptions = append(cleanupOptions, ui.SelectOption{Title: "Remove verified files copied in this run", Description: "", Value: "delete_verified"})
+				}
 				afterChoice, promptErr := ui.RunWizardSelectPrompt(
 					"Step 4 - Execute Import",
 					"Review verification and choose SD-card cleanup",
 					wizard.LeftSummary(),
 					verifyText,
-					[]ui.SelectOption{
-						{Title: "Leave all files on SD card", Description: "", Value: "keep"},
-						{Title: "Remove verified files from SD card", Description: "", Value: "delete_verified"},
-					},
+					cleanupOptions,
 				)
 				if promptErr != nil {
 					return promptErr
@@ -196,7 +216,7 @@ var runCmd = &cobra.Command{
 					continue
 				}
 				if afterChoice == "delete_verified" {
-					deleteSummary, delErr := app.DeleteVerifiedSources(result, cfg.Source, cfg.Target, cfg.CollisionMode)
+					deleteSummary, delErr := app.DeleteVerifiedSources(applySummary.Copied, cfg.Source)
 					if delErr != nil {
 						return delErr
 					}
