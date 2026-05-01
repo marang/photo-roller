@@ -1,5 +1,7 @@
 # PhotoRoller
 
+![PhotoRoller logo](docs/assets/logo.png)
+
 PhotoRoller imports photos from a camera/SD-card DCIM folder and organizes them into dated album folders.
 
 ## Usage
