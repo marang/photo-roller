@@ -8,11 +8,15 @@ import (
 	"github.com/marang/photo-roller/internal/config"
 )
 
+// Version is populated by release builds.
+var Version = "dev"
+
 var cfg config.Config
 
 var rootCmd = &cobra.Command{
-	Use:   "photoroller",
-	Short: "Import photos/videos from DCIM into day-based album folders",
+	Use:     "photoroller",
+	Version: Version,
+	Short:   "Import photos/videos from DCIM into day-based album folders",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		sourceFlag := cmd.Root().PersistentFlags().Lookup("source")
 		if sourceFlag != nil && !sourceFlag.Changed {
